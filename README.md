@@ -17,32 +17,15 @@ Our project could lay the foundation for further genetic studies using these thr
 
 
 
-					EXAMPLE DATA
+					EXAMPLE DATA (would be in table form)
 
+Columns- Species, Gene ID, Time of expression, Highest expressing cells
+Rows- Human Gene, C. elegans ortholog, Drosophila ortholog, Zebrafish ortholog
 
-                Species
-            Gene ID
-Time of expression
-Highest expressing cells
-Human Gene
-NRXN1
-cortical plate formation
-Oligodendrocyte precursor cells
-C. elegans ortholog
-nrx-1
-450 minutes post-fertilization 
-Dopamine neurons
-Drosophila ortholog
+NRXN1, nrx-1, Nrx-1, nrxn1b
 
-
-Nrx-1
-early embryogenesis 
-R8 photoreceptor subtypes
-Zebrafish ortholog
-nrxn1b
-Pharyngula prim-25
-          NA
-
+cortical plate formation, 450 minutes post-fertilization, early embryogenesis , Pharyngula prim-25
+Oligodendrocytes, precursor cells, Dopamine neurons, R8 photoreceptor subtypes, NA
 
 Notes: we could color-code genes that are orthologs of each other for organizational purposes
 		
