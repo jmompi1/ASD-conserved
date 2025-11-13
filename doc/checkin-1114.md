@@ -6,7 +6,7 @@ Since our last submission we have decided to stick to analyzing only two raw sin
 **New progress since last submission (4 pts)**
 Since our last submission we have analyzed the raw Drosophila brain single-cell RNA seq data (Drosophila_single-cell_analysis.R), labelled the three primary cell types, and generated UMAPs of the expression of 5 of our original 6 genes. One gene was not in the annotation file the authors used when alligning their data so it doens't seem to be present in the data. 
 
-Here is how we determined the identities of the 19 clusters generated. 
+Here is how we cleaned the data and determined the identities of the 19 clusters generated. 
 
 **Quality control:** 
 Selected cells where nFeature_RNA > 1500, nFeature_RNA < 4000 & the percent of mitochondrial genes was less than 10 %
