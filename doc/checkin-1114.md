@@ -1,12 +1,12 @@
 # Check in #2 (11/24) 
 
 **How you’ve addressed prior feedback (2 pts)**
-Since our last submission we have decided to stick to analyzing only two raw single-cell RNA-seq datasets. We also are in the process of expanding our gene list to include 10 genes of both categories and we hope to identify trends in the expression of these genes across our three species. 
+Since our last submission we decided on analyzing two raw single-cell RNA-seq datasets, each from different species. We also are in the process of expanding our gene list to include 10 from both species. We're hoping to identify trends in the expression of these gene orthologs.
 
 **New progress since last submission (4 pts)**
 Since our last submission we have analyzed the raw Drosophila brain single-cell RNA seq data (Drosophila_single-cell_analysis.R), labelled the three primary cell types, and generated UMAPs of the expression of 5 of our original 6 genes. One gene was not in the annotation file the authors used when alligning their data so it doens't seem to be present in the data. 
 
-Here is how we cleaned the data and determined the identities of the 19 clusters generated. 
+Listed below is how we cleaned the data and determined the identities of the 19 clusters generated. 
 
 **Quality control:** 
 Selected cells where nFeature_RNA > 1500, nFeature_RNA < 4000 & the percent of mitochondrial genes was less than 10 %
@@ -62,7 +62,7 @@ vnd seems to be pretty lowly expressed uniformly in neurons at this developmenta
 SK seems to be pretty uniformly expressed in neurons of the developping L1 larval brain. 
 
 **Project Organization (2 pts)**
-Moving forward we want to expand our list of genes of interest to 10 for each gene group. I also want to work on identifying neural subtypes in the Drosophila Single-cell RNA-seq data. We are also in process of analyzing the raw C. elegans single-cell RNA-seq data. 
+Moving forward, we aim to expand our list of genes of interest to 10 for each gene group. I also want to work on identifying neural subtypes in the Drosophila Single-cell RNA-seq data. We are also in process of analyzing the raw C. elegans single-cell RNA-seq data. 
 
 **Struggles you are encountering and questions you would like advice on (2 pts)**
 We would love to get some advice moving forward on how to compare the expression patterns between organisms, and some statistical tests we could look into.
