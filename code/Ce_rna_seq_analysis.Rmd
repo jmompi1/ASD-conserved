@@ -1,0 +1,714 @@
+---
+title: "QB25 I Project"
+author: "Joy Mompi"
+date: "2025-11-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+#
+
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("zellkonverter")
+
+library(zellkonverter)
+
+#reading in file 
+h5ad_file_read <- readH5AD("~/qb25-answers/QB25 Project/cao2017.h5ad")
+coa_sce <- h5ad_file_read
+
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+setwd("~/qb25-answers/QB25 Project")
+
+
+```
+
+{r}
+
+
+
+```{r}
+#RE-DO with Seurat
+library(SingleCellExperiment)
+library(Seurat)
+
+assayNames(coa_sce)
+
+altExpNames(coa_sce)
+#read_counts <- as.Seurat(coa_sce, data = "counts")
+
+read_counts <- as.Seurat(coa_sce, counts = "X", data = "X")
+
+
+
+colnames(read_counts@meta.data)
+#output: the number of feature column is called "nFeature_originalexp" and nCount is called "nCountoriginalexp"
+
+
+
+
+# Mitochondrial genes in C. elegans do not start with "mt-"
+
+mit_genes <- c("nduo-6", "ndfl-4","nduo-1", "nduo-2", "nduo-3", "nduo-5", "nduo-4", "atp-6", "ctc-1", "ctc-2", "ctc-3", "ctb-1" )
+
+head(rownames(read_counts))
+
+mit_gene_ids <- c("WBGene00010957", "WBGene00010958", "WBGene00010959", "WBGene00010961", 
+"WBGene00010966", "WBGene00010967", "WBGene00010963", "WBGene00010960", "WBGene00010964", "WBGene00010965", "WBGene00010962", "WBGene00000829"
+)
+
+length(unique(mit_gene_ids))
+read_counts[["percent.mt"]] <- PercentageFeatureSet(
+  read_counts,
+  features = mit_gene_ids
+)
+
+#Visualize QC
+VlnPlot(read_counts, features = c("nFeature_originalexp", "nCount_originalexp", "percent.mt"))
+
+#Filter then visualize again
+read_counts_filter <- subset(read_counts, subset = nFeature_originalexp > 150 & nFeature_originalexp < 1500 & percent.mt < 10)
+VlnPlot(read_counts_filter, features = c("nFeature_originalexp", "nCount_originalexp", "percent.mt"))
+
+
+#nFeature_originalexp is the number of genes detected in each cell
+#nCount_originalexp is the number of total RNA molecules in each cell
+
+```
+
+
+
+```{r}
+#in order to filtering only for neurons and glia, must normalize, find variable features, and scale data -> pca
+#head(colnames(read_counts@meta.data))
+#subset_neuronglia <- subset(read_counts_filter, subset = celltype %in% c("Neuron", "Glia"))
+#output: didn't work
+
+#C. elegans have 56 glial cells
+
+#normalize
+read_counts_norm <- NormalizeData(read_counts_filter)
+
+#identify highly-variable features
+read_counts_norm <- FindVariableFeatures(read_counts_norm, selection.method = "vst", nfeatures = 2000)
+
+VariableFeatures(read_counts_norm)
+
+#scale data
+all_genes <- rownames(read_counts_norm)
+read_counts_norm <- ScaleData(read_counts_norm, features = all_genes)
+#checking dimensions of scaled data
+dim(GetAssayData(read_counts_norm, slot = "scale.data"))
+#output: 20222 genes (variable features) x 24995 cells 
+
+
+```
+
+```{r}
+# Run PCA (if not done yet)
+read_countspca <- RunPCA(read_counts_norm, features = VariableFeatures(read_counts_norm))
+#output: there are 5 top PCs
+#First principal component --> list of genes with the most positive and negative loadings (= correlation or anti-correlation) 
+
+
+#SANITY CHECK
+#existence of variable features
+length(VariableFeatures(read_counts_norm))
+
+#are they in my dataset
+all(VariableFeatures(read_counts_norm) %in% rownames(read_counts_norm))
+
+#causal genes are more conserved, are there any patterns of gene expression that differ between causal and noncausal genes?
+length(rownames(read_counts_norm))
+
+#examining pca results
+print(read_countspca[["pca"]], dims = 1:5, nfeatures = 5)
+
+#how many PCs should I use?
+ElbowPlot(read_countspca)
+#thinking somewhere between 10 and 14
+
+# Find min PC possible to include variability over sample
+stdv <- read_countspca[["pca"]]@stdev
+percent_stdv <- (stdv/sum(stdv)) * 100
+cumulative <- cumsum(percent_stdv)
+co1 <- which(cumulative > 90 & percent_stdv < 5)[1] 
+co2 <- sort(which((percent_stdv[1:length(percent_stdv) - 1] - 
+                     percent_stdv[2:length(percent_stdv)]) > 0.1), 
+            decreasing = T)[1] + 1
+min_pc <- min(co1, co2)
+print(min_pc)
+#output: 18 PCs, will do 40 PCs bc that's what they chose in the paper
+
+#determining dimensionality
+ElbowPlot(read_countspca, ndims = 100)
+```
+
+
+```{r}
+#CLUSTERS
+# Cluster the cells:
+# FindNeighbors() function --> construct a KNN graph based on the euclidean distance in PCA space & refine the edge weights between any two cells based on the shared overlap in their local neighborhoods 
+read_counts_clu <- FindNeighbors(read_countspca, dims = 1:40)
+
+# FindClusters() function  --> Louvain algorithm (default) to group cells together, resolution parameter of 0.4-1.2 typically returns good results for single-cell datasets (increased values leading to a greater number of clusters)
+read_counts_clu <- FindClusters(read_counts_clu, resolution = 2)
+
+# First UMAP
+read_counts_umap<- RunUMAP(read_counts_clu, dims = 1:40)
+print(read_counts_umap)
+```
+
+
+
+```{r}
+#PLOTTING UMAPS
+# Determining clusters of low quality --> nFeature /cluster 
+library(dplyr)
+
+read_counts_data <- read_counts_umap@meta.data
+mean_nFeature <- mean(read_counts_data$nFeature_originalexp, na.rm = TRUE)
+sd_nFeature <- sd(read_counts_data$nFeature_originalexp, na.rm = TRUE)
+clusterfilter <- mean_nFeature - (1.5*(sd_nFeature))
+print(clusterfilter)
+#clusterfilter = 47.82
+
+
+mean_nFeature_clusters <- read_counts_data %>%
+  group_by(seurat_clusters) %>%
+  summarize(mean_nFeature_clusters = mean(nFeature_originalexp, na.rm = TRUE))
+print(mean_nFeature_clusters, n = 100)
+
+
+#Look at generated clusters
+DimPlot(read_counts_umap, reduction = "umap")
+#cool
+
+#Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```
+
+
+
+
+```{r}
+#LABELING + MORE UMAPS
+
+pal <- viridis(10, option = "turbo")
+
+#FeaturePlot_scCustom(seurat_object = L1_brain_drosophila, features = "elav", order = T, colors_use = pal, label = T, na_cutoff = 0.5, pt.size = 0.5, reduction = "umap")
+
+
+install.packages("GlobalOptions", type = "source")
+library(scCustomize)
+
+
+#to identify neuronal cells, use the following marker genes: egl-21 (WBGene00001189), egl-3 (WBGene00001172), ida-1 (WBGene00002048), and sbt-1 (WBGene00011392)
+#to identify canal-associated neurons: acy-2 and ace-3 
+#to identify amphid and phasmid sheath glial-like support cells, use: vap-1 (WBGene00006886) and fig-1 (WBGene00009968)
+#to identify socket glial-like cells: grl-1 and ram-5
+#for non-amphid and phasmid sheath glial cells: kcc-3
+#for panglial cells: mir-228
+
+#finding marker genes
+#markers <- FindAllMarkers(read_counts_clu, only.pos = TRUE)
+#head(markers)
+
+#egl-21
+VlnPlot(read_counts_umap, features = "WBGene00001189")
+#clusters 2, 5, 24, 37, 38
+
+#egl-3     
+VlnPlot(read_counts_umap, features = "WBGene00001172")
+#clusters 2, 5, 24, 28, 37, 38, 40
+
+#ida-1
+VlnPlot(read_counts_umap, features = "WBGene00002048")
+#2, 5, 24, 37, 38, 40
+
+#stb-1
+VlnPlot(read_counts_umap, features = "WBGene00011392")
+#5, 24, 38, 40
+
+#For all the neuron-marker genes, they're highly expressed in clusters 5, 24, 38
+
+
+#GLIA
+#the pan-glial marker mir-228 does not come up, likely was filtered out
+
+#amphid and phasmid
+#vap-1
+VlnPlot(read_counts_umap, features = "WBGene00006886")
+#27
+
+#fig-1
+VlnPlot(read_counts_umap, features = "WBGene00009968")
+#27
+
+#socket-like glial cells
+#grl-1
+VlnPlot(read_counts_umap, features = "WBGene00001710")
+#14, but it's really low overall
+
+#ram-5
+VlnPlot(read_counts_umap, features = "WBGene00004301")
+#14, but it's really low overall
+
+#rest of glial
+#kcc-3
+VlnPlot(read_counts_umap, features = "WBGene00019289")
+#27
+
+#looks like clusters 27 and 14 are more glia-specific
+
+
+
+# Single gene on UMAP
+#FeaturePlot_scCustom(seurat_object = read_counts_, features = "elav", order = T, colors_use = pal, label = T, na_cutoff = 0.5, pt.size = 0.5, reduction = "umap")
+
+
+
+```
+
+```{r}
+# Highlight neuronal clusters
+cluster_neuron <- c("5", "24", "38")
+
+DimPlot(
+  read_counts_umap,
+  reduction = "umap",
+  group.by = "seurat_clusters",
+  cols = ifelse(
+    levels(read_counts_umap$seurat_clusters) %in% cluster_neuron,
+    "red",       # color for highlighted cluster
+    "lightgrey"  # color for other clusters
+  )
+)
+
+# Highlight glial clusters
+cluster_glia <- c("14", "27")
+
+DimPlot(
+  read_counts_umap,
+  reduction = "umap",
+  group.by = "seurat_clusters",
+  cols = ifelse(
+    levels(read_counts_umap$seurat_clusters) %in% cluster_glia,
+    "red",       # color for highlighted cluster
+    "lightgrey"  # color for other clusters
+  )
+)
+```
+
+```{r}
+#REMOVING UNWANTED CLUSTERS
+
+unwantedclusters <- c(0:4, 6:13, 15:23, 25:26, 28:37, 39:44)
+print(unwantedclusters)
+length(unwantedclusters)
+
+neuron_glia <- subset(read_counts_umap, idents = unwantedclusters, invert = TRUE)
+
+
+
+```
+
+```{r}
+#RERUN OF PCA- normalizing
+
+#C. elegans have 56 glial cells
+
+#normalize
+neuron_glia_norm <- NormalizeData(neuron_glia)
+
+#identify highly-variable features
+neuron_glia_norm <- FindVariableFeatures(neuron_glia_norm, selection.method = "vst", nfeatures = 2000)
+
+VariableFeatures(neuron_glia_norm)
+
+#scale data
+neuron_glia_norm <- ScaleData(neuron_glia_norm, features = all_neuronglia_genes)
+#checking dimensions of scaled data
+dim(GetAssayData(neuron_glia_norm, slot = "scale.data"))
+#output: 20222 genes (variable features) x 2727 cells 
+
+
+
+# RUN PCA (if not done yet)
+neuron_glia_pca <- RunPCA(neuron_glia_norm, features = VariableFeatures(neuron_glia_norm))
+#output: there are 5 top PCs
+#First principal component --> list of genes with the most positive and negative loadings (= correlation or anti-correlation) 
+
+
+#SANITY CHECK
+#existence of variable features
+length(VariableFeatures(neuron_glia_norm))
+#output: 2000
+
+#are they in my dataset
+all(VariableFeatures(neuron_glia_norm) %in% rownames(neuron_glia_norm))
+#output: Yes
+
+#causal genes are more conserved, are there any patterns of gene expression that differ between causal and noncausal genes?
+length(rownames(neuron_glia_norm))
+#output: 20,222
+
+#examining pca results
+print(neuron_glia_pca[["pca"]], dims = 1:5, nfeatures = 5)
+
+#how many PCs should I use?
+ElbowPlot(neuron_glia_pca)
+
+
+# Find min PC possible to include variability over sample
+stdv <- neuron_glia_pca[["pca"]]@stdev
+percent_stdv <- (stdv/sum(stdv)) * 100
+cumulative <- cumsum(percent_stdv)
+co1 <- which(cumulative > 90 & percent_stdv < 5)[1] 
+co2 <- sort(which((percent_stdv[1:length(percent_stdv) - 1] - 
+                     percent_stdv[2:length(percent_stdv)]) > 0.1), 
+            decreasing = T)[1] + 1
+min_pc <- min(co1, co2)
+print(min_pc)
+#output: 11 PCs
+
+#determining dimensionality
+ElbowPlot(neuron_glia_pca, ndims = 100)
+
+
+
+#CLUSTERS
+# Cluster the cells:
+# FindNeighbors() function --> construct a KNN graph based on the euclidean distance in PCA space & refine the edge weights between any two cells based on the shared overlap in their local neighborhoods 
+neuron_glia_clu <- FindNeighbors(neuron_glia_pca, dims = 1:11)
+
+# FindClusters() function  --> Louvain algorithm (default) to group cells together, resolution parameter of 0.4-1.2 typically returns good results for single-cell datasets (increased values leading to a greater number of clusters)
+neuron_glia_clu <- FindClusters(neuron_glia_clu, resolution = 2)
+
+# First UMAP
+neuron_glia_umap<- RunUMAP(neuron_glia_clu, dims = 1:11)
+print(neuron_glia_umap)
+
+#PLOTTING UMAPS
+# Determining clusters of low quality --> nFeature /cluster 
+library(dplyr)
+
+neuron_glia_data <- neuron_glia_umap@meta.data
+mean_nFeature <- mean(neuron_glia_data$nFeature_originalexp, na.rm = TRUE)
+sd_nFeature <- sd(neuron_glia_data$nFeature_originalexp, na.rm = TRUE)
+clusterfilter <- mean_nFeature - (1.5*(sd_nFeature))
+print(clusterfilter)
+#clusterfilter = 36.59
+
+
+mean_nFeature_clusters <- neuron_glia_data %>%
+  group_by(seurat_clusters) %>%
+  summarize(mean_nFeature_clusters = mean(nFeature_originalexp, na.rm = TRUE))
+print(mean_nFeature_clusters, n = 100)
+
+
+#Look at generated clusters
+DimPlot(neuron_glia_umap, reduction = "umap")
+#cool
+
+#CELL LABELING
+
+#to identify cholinergic cells, use the following marker genes:  cho-1(WBGene00000501), cha-1(WBGene00000481), and unc-17 (WBGene00006756)
+
+#finding marker genes
+#markers <- FindAllMarkers(read_counts_clu, only.pos = TRUE)
+#head(markers)
+
+##cho-1
+VlnPlot(neuron_glia_umap, features = "WBGene00000501")
+#cluster , , 8, 15?, 17
+
+#cha-1  
+VlnPlot(neuron_glia_umap, features = "WBGene00000481")
+#clusters  3, 8, 17
+
+#unc-17
+VlnPlot(neuron_glia_umap, features = "WBGene00006756")
+#same as before, 6, 6, 9? 
+
+#CLUSTERS 1 AND 17 FOR CHOLINERGIC
+
+#cluster 24
+
+#GABAergic: unc-25
+VlnPlot(neuron_glia_umap, features = "WBGene00006762")
+#0,1,2, 
+#Cluster 24 has most significant expression in GABAergic marker unc-25
+
+#to identify amphid and phasmid sheath glial-like support cells, use: vap-1 (WBGene00006886) and fig-1 (WBGene00009968)
+#to identify socket glial-like cells: grl-1 and ram-5
+#for non-amphid and phasmid sheath glial cells: kcc-3
+
+#vap-1
+VlnPlot(neuron_glia_umap, features = "WBGene00006886")
+#7, 12, 14
+
+#fig-1
+VlnPlot(neuron_glia_umap, features = "WBGene00009968")
+#same as above
+
+#amphid and phasmid: clusters 7, 12, 14
+
+#grl-1
+VlnPlot(neuron_glia_umap, features = "WBGene00001710")
+#3
+
+#ram-5
+VlnPlot(neuron_glia_umap, features = "WBGene00004301")
+#3, 11
+
+#socket cells: cluster 3
+
+#kcc-3
+VlnPlot(neuron_glia_umap, features = "WBGene00019289")
+#5, 7, 11, 12, 14
+
+
+#3, 5, 7, 11, 12, 14 will be my glial clusters
+
+
+#to determine monoaminergic neurons: cat-1(WBGene00000296) (monoamine), dat-1 (WBGene00000934) cat-2 (WBGene00000296) (dopaminergic), tph-1(WBGene00006600), mod-1(WBGene00003386) (serotinergic)
+
+#cat-1
+VlnPlot(neuron_glia_umap, features = "WBGene00000295")
+#22
+
+#dat-1
+VlnPlot(neuron_glia_umap, features = "WBGene00000934")
+#22
+
+#cat-2
+VlnPlot(neuron_glia_umap, features = "WBGene00000296")
+#22
+
+#tph-1
+VlnPlot(neuron_glia_umap, features = "WBGene00006600")
+#NA
+
+#mod-1
+VlnPlot(neuron_glia_umap, features = "WBGene00003386")
+
+#ser-4
+VlnPlot(neuron_glia_umap, features = "WBGene00004779")
+#23
+
+#CLUSTERS 22 REPRESENT MONOAMINERGIC NEURONS
+
+#peptidergic: FLP-1 (WBGene00001444), FLP-11 (WBGene00001454), FLP-17 (WBGene00001460)
+VlnPlot(neuron_glia_umap, features = "WBGene00001444")
+#NA
+VlnPlot(neuron_glia_umap, features = "WBGene00001454")
+#NA
+VlnPlot(neuron_glia_umap, features = "WBGene00001460")
+
+#23 represents peptidergic
+
+
+#glutamatergic neurons: eat-4 (WBGene00001135)
+
+VlnPlot(neuron_glia_umap, features = "WBGene00001135")
+#4
+
+#CLUSTER 3 will be glutamatergic
+
+#ASSIGNING CELL TYPES TO CLUSTERS
+Idents(neuron_glia_umap) <- "seurat_clusters" 
+
+#GLIAL: CLUSTERS 2, 7, 10, 12, 17, 11 
+neuron_glia_umap<-RenameIdents(neuron_glia_umap, '2' = "Glial cells",'7' = "Glial cells", '10' = "Glial cells", '11' = "Glial cells", '12' = "Glial cells", '17' = "Glial cells")
+
+#CHOLINERGIC: CLUSTERS 1 and 17
+neuron_glia_umap <- RenameIdents(neuron_glia_umap, '1' = "Cholinergic", '15' = "Cholinergic")
+
+#MONOAMINERGIC: CLUSTER 23
+neuron_glia_umap <- RenameIdents(neuron_glia_umap, '23' = "Monoaminergic")
+
+#PEPTIDERGIC: CLUSTER 27
+neuron_glia_umap <- RenameIdents(neuron_glia_umap, '27' = "Peptidergic")
+
+#GLUTAMATERGIC: CLUSTER 3
+neuron_glia_umap <- RenameIdents(neuron_glia_umap, '3' = "Glutamatergic")
+
+#UNCHARACTERIZED
+
+
+
+#PT2- change of course- previous categories do not define all the clusters, so assign broader categories (neuron, glial-subtypes) 
+
+#amphid and phasmid: clusters 7, 12, 14
+neuron_glia_umap <- RenameIdents(neuron_glia_umap, '7' = 'Amphid/phasmid glia', '12' = 'Amphid/phasmid glia', '14' = 'Amphid/phasmid glia')
+
+#socket cells: cluster 3
+
+neuron_glia_umap <- RenameIdents(neuron_glia_umap, '3' = 'Socket glia')
+
+#other glial types: clusters 5, 7, 11, 12, 14
+
+neuron_glia_umap <- RenameIdents(neuron_glia_umap, '5' = 'Other glial cells', '11' = 'Other glial cells')
+
+
+#NEURONS
+
+neuron_glia_umap <- RenameIdents(neuron_glia_umap, '0' = 'Neurons', '1' = 'Neurons', '2' = 'Neurons', '4' = 'Neurons', '6' = 'Neurons', '8' = 'Neurons', '9' = 'Neurons', '10' = 'Neurons', '13' = 'Neurons', '15' = 'Neurons', '16' = 'Neurons', '17' = 'Neurons', '18' = 'Neurons', '19' = 'Neurons', '20' = 'Neurons', '21' = 'Neurons', '22' = 'Neurons', '23' = 'Neurons')
+
+neuron_glia_umap[["assigned.ident"]] <- Idents(object = neuron_glia_umap)
+DimPlot(neuron_glia_umap, reduction = "umap", group.by = c("assigned.ident"))
+
+# Save Object
+saveRDS(neuron_glia_umap, file = "~/qb25-answers/QB25 Project/neuron_glia_umap")
+
+install.packages("RColorBrewer")
+
+
+
+
+library(Seurat)
+
+neuron_glia_umap <- readRDS("~/qb25-answers/QB25 Project/neuron_glia_umap")
+
+
+library(RColorBrewer)
+
+
+
+
+#UMAP for presentation
+my_colors <- brewer.pal(n = 8, name = "Set2")
+DimPlot(
+  neuron_glia_umap,
+  reduction = "umap",
+  group.by = "assigned.ident",
+  pt.size = 1,
+  cols = my_colors
+)  +
+  theme(
+    legend.text = element_text(size = 14),
+  )
+
+library(ggplot2)
+
+
+```
+
+
+```{r}
+#Generating table of genes of interest and their average expression in each cluster:
+#Define the gene lists
+related_genes <- c("WBGene00000445", "WBGene00008570", "WBGene00000018", "WBGene00000109", "WBGene00017430", "WBGene00022051", "WBGene00011867", "WBGene00000963", "WBGene00000964", "WBGene00001579", "WBGene00001130", "WBGene00006868", "WBGene00022048", "WBGene00013914", "WBGene00016405", "WBGene00003929", "WBGene00002192", "WBGene00013339", "WBGene00004307", "WBGene00006771", "WBGene00007352", "WBGene00008053")
+causal_genes <- c("WBGene00007799", "WBGene00004760", "WBGene00000064", "WBGene00000066", "WBGene00000064", "WBGene00000113", "WBGene00003030", "WBGene00006772", "WBGene00006807", "WBGene00001560", "WBGene00000838", "WBGene00017885", "WBGene00001368", "WBGene00001512", "WBGene00010867", "WBGene00002261", "WBGene00002295", "WBGene00004457", "WBGene00017190", "WBGene00003794", "WBGene00000914", "WBGene00004947")
+
+# Average expression for all genes
+avg_all <- AverageExpression(neuron_glia_umap, features = all_genes)$originalexp
+avg_all <- as.matrix(avg_all)
+
+# Filter to valid genes
+valid_rel  <- intersect(related_genes, rownames(avg_all))
+valid_caus <- intersect(causal_genes,  rownames(avg_all))
+
+if(length(valid_rel) == 0 | length(valid_caus) == 0) {
+  stop("No valid genes found in related or causal gene lists.")
+}
+
+# Observed difference per cluster
+obs_rel  <- colMeans(avg_all[valid_rel, , drop = FALSE], na.rm = TRUE)
+obs_caus <- colMeans(avg_all[valid_caus, , drop = FALSE], na.rm = TRUE)
+T_obs <- obs_caus - obs_rel
+
+# Permutation test
+n_perm <- 5000
+set.seed(123)
+T_perm <- matrix(NA, nrow = n_perm, ncol = ncol(avg_all))
+colnames(T_perm) <- colnames(avg_all)
+
+for (i in 1:n_perm) {
+  perm <- sample(rownames(avg_all))
+  rel_perm  <- perm[1:length(valid_rel)]
+  caus_perm <- perm[(length(valid_rel)+1):(length(valid_rel)+length(valid_caus))]
+  
+  rel_vals  <- colMeans(avg_all[rel_perm, , drop = FALSE], na.rm = TRUE)
+  caus_vals <- colMeans(avg_all[caus_perm, , drop = FALSE], na.rm = TRUE)
+  
+  T_perm[i, ] <- caus_vals - rel_vals
+}
+
+# p-values with pseudocount to avoid 0/1
+p_vals <- sapply(seq_along(T_obs), function(j) {
+  (sum(T_perm[, j] >= T_obs[j]) + 1) / (n_perm + 1)
+})
+names(p_vals) <- names(T_obs)
+
+# Results
+results <- data.frame(
+  cluster = names(T_obs),
+  observed_difference = T_obs,
+  p_value = p_vals
+)
+results
+
+# Plot expression differences
+desired_order <- c("Neurons", "Other glial cells", "Socket glia", "Amphid/phasmid glia")
+results$cluster <- factor(results$cluster, levels = desired_order)
+ggplot(results,
+                             aes(x = cluster, y = observed_difference, fill = cluster)) +
+  geom_col() +
+  geom_text(aes(label = gsub(" ", "\n", cluster)),
+            vjust = -0.5,
+            size = 7,
+            lineheight = 0.9) +
+  scale_fill_manual(values = my_colors) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.20))) +
+  theme_bw(base_size = 25) +
+  labs(
+    y = "Δ Avg Expr (Causal − Related)",
+    x = NULL
+  ) +
+  theme(
+    axis.text.x = element_blank(),
+    legend.position = "none"
+  )
+ggsave("expression_casrel.png", plot = expr_clust_causrel, width = 15, height = 8, dpi = 600)
+
+# Shorten very small p-values for display
+results$label <- ifelse(results$p_value < 0.001, "<0.001", sprintf("p=%.3g", results$p_value))
+# Plot with p-values on top of bars
+causrel_pvalue <- ggplot(results, aes(x = cluster, y = observed_difference, fill = cluster)) +
+  geom_col() +
+  scale_fill_manual(values = my_colors) +
+  theme_bw(base_size = 25) +
+  labs(
+    y = "Δ Avg Expr (Causal − Related)",
+    x = NULL
+  ) +
+geom_text(
+  aes(label = label),
+  vjust = -0.5,
+  size = 6,
+  fontface = "bold"
+) +
+scale_x_discrete(labels = function(x) gsub(" ", "\n", x)) +
+scale_y_continuous(expand = expansion(mult = c(0.05, 0.25))) +
+theme(
+  legend.position = "none",
+  axis.text.x = element_text(size = 20, vjust = 1)
+)
+ggsave("p-value_expression_casrel.png", plot = causrel_pvalue, width = 15, height = 8, dpi = 600)
+```
+
+```{r}
+
+```
+
