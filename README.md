@@ -67,3 +67,6 @@ https://www.bioconductor.org/packages/devel/bioc/vignettes/orthogene/inst/doc/or
 Published example figure on gene orthologs related to major depressive disorder in humans. 
 
 ![https://pmc.ncbi.nlm.nih.gov/articles/PMC8319724/table/T1/]
+
+FINAL PRESENTATION: 
+https://docs.google.com/presentation/d/1JhAI2oO9heHiUr3IgC4Oi1QCCMid80i4ycEJQO_VIoE/edit?slide=id.g3ad33b6c5a0_0_117#slide=id.g3ad33b6c5a0_0_117
